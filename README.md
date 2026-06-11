@@ -8,6 +8,12 @@ Initial target models:
 - OLMoE-1B-7B
 - DeepSeek-V3
 
+Generate the combined report:
+
+```bash
+PYTHONPATH=src python3 -m moe_matmul_stats.cli --out results/moe_matmul_stats.md
+```
+
 ## Matmul Record
 
 One record describes one matmul family, not every runtime invocation.

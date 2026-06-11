@@ -9,6 +9,9 @@ description = "Static matmul shape extraction for MoE language model architectur
 requires-python = ">=3.10"
 dependencies = []
 
+[project.scripts]
+moe-matmul-stats = "moe_matmul_stats.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
