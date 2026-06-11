@@ -1,0 +1,51 @@
+Item			Nano-MoE-Jax				OLMoE-1B-7B				Deepseek-V3			
+Field	Unit	Owner	Prefill (value)	Src	Decode (value)	Src	Prefill (value)	Src	Decode (value)	Src	Prefill (value)	Src	Decode (value)	Src
+A.  Identity and business case														
+Business case / relevance (1 line)	text		Minimal synthetic MoE for REDEFINE RTL dispatch verification; golden-ref for cycle-accurate sim	assumed (golden-ref)	Minimal synthetic MoE for REDEFINE RTL dispatch verification; golden-ref for cycle-accurate sim	assumed (golden-ref)	Production 64-expert MoE (batch=32 ensures cold experts fire); benchmarks REDEFINE dynamic dispatch	OLMoE paper/HF config	Production 64-expert MoE (batch=32 ensures cold experts fire); benchmarks REDEFINE dynamic dispatch	OLMoE paper/HF config	SOTA 671B/37B-active MoE; validates REDEFINE dispatch at 256-expert scale with MLA compressed KV	DeepSeek-V3 report	SOTA 671B/37B-active MoE; validates REDEFINE dispatch at 256-expert scale with MLA compressed KV	DeepSeek-V3 report
+B.  Operating point  (pin before any number)														
+Batch size	count		1	assumed (golden-ref)	1	assumed (golden-ref)	32	OLMoE paper/HF config	32	OLMoE paper/HF config	32	DeepSeek-V3 report	32	DeepSeek-V3 report
+Sequence length (prompt)	tokens		128	assumed (golden-ref)	512	assumed (golden-ref)	512	OLMoE paper/HF config	2048	OLMoE paper/HF config	1024	DeepSeek-V3 report	4096	DeepSeek-V3 report
+Context length (Key-Value)	tokens		512	assumed (golden-ref)	512	assumed (golden-ref)	2048	OLMoE paper/HF config	2048	OLMoE paper/HF config	4096	DeepSeek-V3 report	4096	DeepSeek-V3 report
+C.  Model architecture														
+Total parameters	billions		0.00236	assumed (golden-ref)	0.00236	assumed (golden-ref)	6.747	OLMoE paper/HF config	6.747	OLMoE paper/HF config	670	DeepSeek-V3 report	670	DeepSeek-V3 report
+Active parameters per token	billions		0.00075	computed	0.00075	computed	1.007	computed	1.007	computed	35.3	computed	35.3	computed
+Layers	count		4	assumed (golden-ref)	4	assumed (golden-ref)	16	OLMoE paper/HF config	16	OLMoE paper/HF config	61	DeepSeek-V3 report	61	DeepSeek-V3 report
+Hidden dimension	dim		128	assumed (golden-ref)	128	assumed (golden-ref)	2048	OLMoE paper/HF config	2048	OLMoE paper/HF config	7168	DeepSeek-V3 report	7168	DeepSeek-V3 report
+Feedforward dimension (dense)	dim		N/A (MoE only)	assumed (golden-ref)	N/A (MoE only)	assumed (golden-ref)	N/A (MoE only)	OLMoE paper/HF config	N/A (MoE only)	OLMoE paper/HF config	18432 (first 3 layers only)	DeepSeek-V3 report	18432 (first 3 layers only)	DeepSeek-V3 report
+Attention: heads / head dim / Key-Value heads	counts		8 / 16 / 8	assumed (golden-ref)	8 / 16 / 8	assumed (golden-ref)	16 / 128 / 8 (GQA)	OLMoE paper/HF config	16 / 128 / 8 (GQA)	OLMoE paper/HF config	128 / 128 / MLA kv_lora=512	DeepSeek-V3 report	128 / 128 / MLA kv_lora=512	DeepSeek-V3 report
+Total experts	count		8	assumed (golden-ref)	8	assumed (golden-ref)	64	OLMoE paper/HF config	64	OLMoE paper/HF config	256	DeepSeek-V3 report	256	DeepSeek-V3 report
+Experts active per token (top-k)	count		2	assumed (golden-ref)	2	assumed (golden-ref)	8	OLMoE paper/HF config	8	OLMoE paper/HF config	8	DeepSeek-V3 report	8	DeepSeek-V3 report
+Shared experts	count		0	assumed (golden-ref)	0	assumed (golden-ref)	0	OLMoE paper/HF config	0	OLMoE paper/HF config	1	DeepSeek-V3 report	1	DeepSeek-V3 report
+Expert feedforward dimension	dim		160	assumed (golden-ref)	160	assumed (golden-ref)	1024	OLMoE paper/HF config	1024	OLMoE paper/HF config	2048	DeepSeek-V3 report	2048	DeepSeek-V3 report
+Router / gating type	text		Softmax top-2, no aux loss	assumed (golden-ref)	Softmax top-2, no aux loss	assumed (golden-ref)	Softmax top-8 + z-loss regulariser	OLMoE paper/HF config	Softmax top-8 + z-loss regulariser	OLMoE paper/HF config	Top-8 routed + 1 shared; complementary seq-wise aux-free load balancing	DeepSeek-V3 report	Top-8 routed + 1 shared; complementary seq-wise aux-free load balancing	DeepSeek-V3 report
+D.  Compute profile														
+Multiply-accumulate ops per token	MACs/token		1155072	computed	1548288	computed	1245708288	computed	1346371584	computed	49323966464	computed	58534658048	computed
+Dominant operators (shapes + % of compute)	text		MoE gate+up(128,160)×2 ~68%; AttnQKV(128,128) ~27%; attn scores ~5%	computed	MoE gate+up(128,160)×2 ~60%; AttnQKV ~25%; KV attn ctx ~15%	computed	MoE gate+up(2048,1024)×8 ~77%; AttnQKV(2048,2048) ~18%; router ~5%	computed	MoE gate+up(2048,1024)×8 ~73%; AttnQKV ~18%; KV attn ~9%	computed	MoE gate+up(7168,2048)×9 experts ~66%; MLA proj(q_lora+kv_lora) ~30%; router ~4%	computed	MoE gate+up(7168,2048)×9 experts ~58%; MLA proj ~27%; KV attn (4096 ctx) ~15%	computed
+Arithmetic intensity	FLOPs/byte		0.2	computed	0.6	computed	5.5	computed	13.7	computed	4.6	computed	72.5	computed
+E.  Memory profile  (owner: compiler)														
+Weight footprint (total)	bytes		9437184	computed	9437184	computed	13493731328	computed	13493731328	computed	6.69708E+11	computed	6.69708E+11	computed
+Weight footprint per layer	bytes		2359296	computed	2359296	computed	843358208	computed	843358208	computed	10978827079	computed	10978827079	computed
+Weight footprint per expert	bytes		491520	computed	491520	computed	12582912	computed	12582912	computed	44040192	computed	44040192	computed
+Activation footprint per layer	bytes		65536	computed	512	computed	2097152	computed	4096	computed	7340032	computed	7168	computed
+Key-Value cache size	bytes		2097152	computed	2097152	computed	4294967296	computed	4294967296	computed	16374562816	computed	16374562816	computed
+Bytes moved off-chip per token	bytes/token		3080192	computed	5111808	computed	65011712	computed	197132288	computed	1110704128	computed	1615069184	computed
+On-chip resident working set	bytes		2884096	computed	2884096	computed	851750912	computed	851750912	computed	10987222855	computed	10987222855	computed
+Reuse / locality notes	text		All weights fit on-chip (9.4 MB); KV fits SRAM; zero off-chip streaming needed	assumed (golden-ref)	All weights fit on-chip (9.4 MB); KV fits SRAM; zero off-chip streaming needed	assumed (golden-ref)	8/64 experts active; 87.5% expert weight cold per token; dynamic page fetch per layer	OLMoE paper/HF config	8/64 experts active; 87.5% expert weight cold per token; dynamic page fetch per layer	OLMoE paper/HF config	MLA 32× KV compression vs standard MHA; 9/257 experts active; 96.5% expert weight cold	DeepSeek-V3 report	MLA 32× KV compression vs standard MHA; 9/257 experts active; 96.5% expert weight cold	DeepSeek-V3 report
+Key-Value cache read bandwidth per decode step	bytes/step				2097152	computed			4294967296	computed			16374562816	computed
+F.  Precision														
+Weights precision			FP32	assumed (golden-ref)	FP32	assumed (golden-ref)	BF16	OLMoE paper/HF config	BF16	OLMoE paper/HF config	FP8 (E4M3)	DeepSeek-V3 report	FP8 (E4M3)	DeepSeek-V3 report
+Activations precision			FP32	assumed (golden-ref)	FP32	assumed (golden-ref)	BF16	OLMoE paper/HF config	BF16	OLMoE paper/HF config	BF16	DeepSeek-V3 report	BF16	DeepSeek-V3 report
+Key-Value cache precision			FP32	assumed (golden-ref)	FP32	assumed (golden-ref)	BF16	OLMoE paper/HF config	BF16	OLMoE paper/HF config	BF16	DeepSeek-V3 report	BF16	DeepSeek-V3 report
+Accumulation precision			FP32	assumed (golden-ref)	FP32	assumed (golden-ref)	FP32	OLMoE paper/HF config	FP32	OLMoE paper/HF config	FP32	DeepSeek-V3 report	FP32	DeepSeek-V3 report
+Quantization scheme			None	assumed (golden-ref)	None	assumed (golden-ref)	None (BF16 baseline)	OLMoE paper/HF config	None (BF16 baseline)	OLMoE paper/HF config	Per-tensor FP8 weights; BF16 activations; online scale factors	DeepSeek-V3 report	Per-tensor FP8 weights; BF16 activations; online scale factors	DeepSeek-V3 report
+G.  Sparsity														
+Expert activation fraction (top-k / total)	%		25	computed	25	computed	12.5	OLMoE paper/HF config	12.5	OLMoE paper/HF config	3.5	computed	3.5	computed
+Other sparsity (type + level)	text		None	assumed (golden-ref)	None	assumed (golden-ref)	None beyond expert sparsity	OLMoE paper/HF config	None beyond expert sparsity	OLMoE paper/HF config	FP8 weight quantization (additional effective sparsity)	DeepSeek-V3 report	FP8 weight quantization	DeepSeek-V3 report
+Routing / gather-scatter implication	text		Top-2 gather from 8 experts; regular pattern, minimal scatter overhead for tiny model	assumed (golden-ref)	Top-2 gather from 8 experts; regular pattern, minimal scatter overhead for tiny model	assumed (golden-ref)	Top-8 gather from 64 experts; irregular page access across 8 expert groups; REDEFINE dynamic dispatch required	OLMoE paper/HF config	Top-8 gather from 64 experts; irregular page access; REDEFINE event-driven dispatch critical path	OLMoE paper/HF config	Top-8+1 gather from 256+1 experts; 9 distinct weight pages per token per MoE layer	DeepSeek-V3 report	Top-8+1 gather from 256+1 experts; REDEFINE event-driven dispatch critical path	DeepSeek-V3 report
+H.  KPIs and targets														
+Latency target (first-token prefill / per-token decode)	ms		< 1 / < 0.1	target	< 1 / < 0.1	target	< 50 / < 20	target	< 50 / < 20	target	< 500 / < 100	target	< 500 / < 100	target
+Throughput target (per stream)	tokens/s		> 1000	target	> 1000	target	> 100	target	> 100	target	> 10	target	> 10	target
+Throughput target (aggregate)	tokens/s		> 1000	target	> 1000	target	> 3200 (32×)	target	> 3200 (32×)	target	> 320 (32×)	target	> 320 (32×)	target
+Efficiency target (optional)	tokens/J or TOPS/W		N/A (test model)	target	N/A (test model)	target	TBD	target	TBD	target	TBD	target	TBD	target
+Accuracy floor	%		N/A (test model)	target	N/A (test model)	target	>= 95% of FP16 baseline	target	>= 95% of FP16 baseline	target	>= 95% of FP16 baseline	target	>= 95% of FP16 baseline	target
+Throughput target (per cycle)	tokens/cycle													
