@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .report import write_markdown_report
-from .sources import collectStatsFromConfig, fetch_hf_config
+from .sources import NANO_MOE_JAX_DEFAULT_CONFIG, collectStatsFromConfig, fetch_hf_config
 from .verification import (
     ModelContext,
     OperatingPoint,
@@ -22,52 +23,103 @@ from .verification import (
 class ModelSpec:
     label: str
     slug: str
-    hf_model: str
     kind: str
+    hf_model: str | None = None
     revision: str = "main"
+    config: Mapping[str, Any] | None = None
+    source: str | None = None
     metrics_config_path: tuple[str, ...] = ()
+    operating_points: Mapping[str, OperatingPoint] | None = None
 
 
+DEFAULT_OLMOE_MODEL = "allenai/OLMoE-1B-7B-0125"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V3"
 DEFAULT_DEEPSEEK_V4_MODEL = "deepseek-ai/DeepSeek-V4-Pro"
 DEFAULT_KIMI_K25_MODEL = "moonshotai/Kimi-K2.5"
 
-DEFAULT_NEW_MODEL_SPECS = (
-    ModelSpec(
-        label="DeepSeek-V4-Pro",
-        slug="deepseek-v4-pro",
-        hf_model=DEFAULT_DEEPSEEK_V4_MODEL,
-        kind="deepseek_v4",
-    ),
-    ModelSpec(
-        label="Kimi-K2.5",
-        slug="kimi-k2.5",
-        hf_model=DEFAULT_KIMI_K25_MODEL,
-        kind="deepseek",
-        metrics_config_path=("text_config",),
-    ),
-)
+NANO_OPERATING_POINTS = {
+    "Prefill": OperatingPoint(batch=1, sequence=128, kv_context=512),
+    "Decode": OperatingPoint(batch=1, sequence=512, kv_context=512),
+}
 
-DEFAULT_LARGE_MODEL_OPERATING_POINTS = {
+OLMOE_OPERATING_POINTS = {
+    "Prefill": OperatingPoint(batch=32, sequence=512, kv_context=2048),
+    "Decode": OperatingPoint(batch=32, sequence=2048, kv_context=2048),
+}
+
+LARGE_MODEL_OPERATING_POINTS = {
     "Prefill": OperatingPoint(batch=32, sequence=1024, kv_context=4096),
     "Decode": OperatingPoint(batch=32, sequence=4096, kv_context=4096),
 }
 
 
-def write_new_model_results(
+def default_model_specs(
     *,
-    specs: tuple[ModelSpec, ...] = DEFAULT_NEW_MODEL_SPECS,
+    olmoe_model: str = DEFAULT_OLMOE_MODEL,
+    deepseek_model: str = DEFAULT_DEEPSEEK_MODEL,
+    deepseek_v4_model: str = DEFAULT_DEEPSEEK_V4_MODEL,
+    kimi_model: str = DEFAULT_KIMI_K25_MODEL,
+    revision: str = "main",
+) -> tuple[ModelSpec, ...]:
+    return (
+        ModelSpec(
+            label="Nano-MoE-JAX",
+            slug="nano-moe-jax",
+            kind="nano",
+            config=dict(NANO_MOE_JAX_DEFAULT_CONFIG),
+            source="github:carrycooldude/Nano-MoE-JAX defaults",
+            operating_points=NANO_OPERATING_POINTS,
+        ),
+        ModelSpec(
+            label="OLMoE-1B-7B",
+            slug="olmoe-1b-7b",
+            kind="olmoe",
+            hf_model=olmoe_model,
+            revision=revision,
+            operating_points=OLMOE_OPERATING_POINTS,
+        ),
+        ModelSpec(
+            label="DeepSeek-V3",
+            slug="deepseek-v3",
+            kind="deepseek",
+            hf_model=deepseek_model,
+            revision=revision,
+            operating_points=LARGE_MODEL_OPERATING_POINTS,
+        ),
+        ModelSpec(
+            label="DeepSeek-V4-Pro",
+            slug="deepseek-v4-pro",
+            kind="deepseek_v4",
+            hf_model=deepseek_v4_model,
+            revision=revision,
+            operating_points=LARGE_MODEL_OPERATING_POINTS,
+        ),
+        ModelSpec(
+            label="Kimi-K2.5",
+            slug="kimi-k2.5",
+            kind="deepseek",
+            hf_model=kimi_model,
+            revision=revision,
+            metrics_config_path=("text_config",),
+            operating_points=LARGE_MODEL_OPERATING_POINTS,
+        ),
+    )
+
+
+def write_model_results(
+    *,
+    specs: tuple[ModelSpec, ...],
     models_root: str | Path = "models",
     results_root: str | Path = "results",
     metric_sheet_path: str | Path = "verify/ai_filled_metrics_sheet.tsv",
 ) -> list[Path]:
-    """Fetch configs and write per-model metrics.md and matmul.md files."""
+    """Write per-model config.json, metrics.md, and matmul.md files."""
 
     written: list[Path] = []
     metric_units = _metric_units(metric_sheet_path)
 
     for spec in specs:
-        config = fetch_hf_config(spec.hf_model, revision=spec.revision)
-        source = f"huggingface:{spec.hf_model}@{spec.revision}"
+        config, source = _load_spec_config(spec)
 
         model_dir = Path(models_root) / spec.slug
         model_dir.mkdir(parents=True, exist_ok=True)
@@ -90,7 +142,7 @@ def write_new_model_results(
         )
         operating_points = {
             (spec.label, phase): point
-            for phase, point in DEFAULT_LARGE_MODEL_OPERATING_POINTS.items()
+            for phase, point in _spec_operating_points(spec).items()
         }
         rows = build_computed_metric_rows(
             contexts={spec.label: context},
@@ -109,6 +161,37 @@ def write_new_model_results(
         written.append(metrics_path)
 
     return written
+
+
+def write_new_model_results(
+    *,
+    specs: tuple[ModelSpec, ...] | None = None,
+    models_root: str | Path = "models",
+    results_root: str | Path = "results",
+    metric_sheet_path: str | Path = "verify/ai_filled_metrics_sheet.tsv",
+) -> list[Path]:
+    """Backward-compatible wrapper for writing organized per-model results."""
+
+    return write_model_results(
+        specs=specs or default_model_specs()[3:],
+        models_root=models_root,
+        results_root=results_root,
+        metric_sheet_path=metric_sheet_path,
+    )
+
+
+def _load_spec_config(spec: ModelSpec) -> tuple[dict[str, Any], str]:
+    if spec.config is not None:
+        source = spec.source or f"local:{spec.slug}"
+        return dict(spec.config), source
+    if not spec.hf_model:
+        raise ValueError(f"ModelSpec {spec.slug!r} needs either config or hf_model.")
+    source = spec.source or f"huggingface:{spec.hf_model}@{spec.revision}"
+    return fetch_hf_config(spec.hf_model, revision=spec.revision), source
+
+
+def _spec_operating_points(spec: ModelSpec) -> Mapping[str, OperatingPoint]:
+    return spec.operating_points or LARGE_MODEL_OPERATING_POINTS
 
 
 def _nested_config(config: dict[str, Any], path: tuple[str, ...]) -> dict[str, Any]:

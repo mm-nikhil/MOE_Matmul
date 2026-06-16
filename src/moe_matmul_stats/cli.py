@@ -6,17 +6,17 @@ import argparse
 from pathlib import Path
 
 from .model_results import (
+    DEFAULT_DEEPSEEK_MODEL,
     DEFAULT_DEEPSEEK_V4_MODEL,
     DEFAULT_KIMI_K25_MODEL,
-    ModelSpec,
-    write_new_model_results,
+    DEFAULT_OLMOE_MODEL,
+    default_model_specs,
+    write_model_results,
 )
 from .report import write_markdown_report
 from .schema import ModelStats
 from .sources import collectStatsHF, collectStatsNanoJax
 
-DEFAULT_OLMOE_MODEL = "allenai/OLMoE-1B-7B-0125"
-DEFAULT_DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V3"
 DEFAULT_OUTPUT = "results/moe_matmul_stats.md"
 
 
@@ -67,23 +67,13 @@ def main(argv: list[str] | None = None) -> int:
     output_path = write_markdown_report(stats, Path(args.out))
     print(f"Wrote {output_path}")
     if not args.skip_organized_results:
-        written = write_new_model_results(
-            specs=(
-                ModelSpec(
-                    label="DeepSeek-V4-Pro",
-                    slug="deepseek-v4-pro",
-                    hf_model=args.deepseek_v4_model,
-                    kind="deepseek_v4",
-                    revision=args.revision,
-                ),
-                ModelSpec(
-                    label="Kimi-K2.5",
-                    slug="kimi-k2.5",
-                    hf_model=args.kimi_model,
-                    kind="deepseek",
-                    revision=args.revision,
-                    metrics_config_path=("text_config",),
-                ),
+        written = write_model_results(
+            specs=default_model_specs(
+                olmoe_model=args.olmoe_model,
+                deepseek_model=args.deepseek_model,
+                deepseek_v4_model=args.deepseek_v4_model,
+                kimi_model=args.kimi_model,
+                revision=args.revision,
             ),
             models_root=args.models_root,
             results_root=args.results_root,

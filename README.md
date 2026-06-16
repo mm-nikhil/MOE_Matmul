@@ -16,7 +16,7 @@ Generate the combined report plus organized per-model outputs:
 PYTHONPATH=src python3 -m moe_matmul_stats.cli --out results/moe_matmul_stats.md
 ```
 
-New Hugging Face configs are saved under `models/<model-slug>/config.json`.
+Model configs are saved under `models/<model-slug>/config.json`.
 Per-model outputs are saved under `results/<model-slug>/metrics.md` and
 `results/<model-slug>/matmul.md`.
 

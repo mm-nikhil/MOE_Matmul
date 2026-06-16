@@ -1,0 +1,19 @@
+{
+  "aux_loss_coeff": 0.01,
+  "batch_size": 32,
+  "block_size": 128,
+  "d_ff": 512,
+  "d_model": 128,
+  "dropout_rate": 0.1,
+  "eval_interval": 250,
+  "eval_iters": 50,
+  "learning_rate": 0.0003,
+  "max_iters": 5000,
+  "model_type": "nano_moe_jax",
+  "n_experts": 4,
+  "n_heads": 4,
+  "n_layers": 4,
+  "top_k": 2,
+  "vocab_size": 256,
+  "weight_decay": 0.1
+}
