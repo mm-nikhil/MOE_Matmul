@@ -170,6 +170,43 @@ def build_verified_rows(
     return rows
 
 
+def build_computed_metric_rows(
+    *,
+    contexts: dict[str, ModelContext],
+    operating_points: dict[tuple[str, str], "OperatingPoint"],
+    metric_units: dict[str, str] | None = None,
+) -> list[VerifiedMetricRow]:
+    """Compute config/formula rows without comparing against an external sheet."""
+
+    metric_units = metric_units or {}
+    sheet = _operating_point_sheet(operating_points)
+    rows: list[VerifiedMetricRow] = []
+    metric_names = list(CONFIG_METRICS) + list(FORMULA_METRICS)
+
+    for metric in metric_names:
+        category = "config" if metric in CONFIG_METRICS else "formula"
+        computer = CONFIG_METRICS.get(metric) or FORMULA_METRICS[metric]
+        for label, context in contexts.items():
+            for phase in PHASES:
+                result = computer(context, phase, sheet)
+                rows.append(
+                    VerifiedMetricRow(
+                        metric=metric,
+                        unit=metric_units.get(metric, ""),
+                        model=label,
+                        phase=phase,
+                        category=category,
+                        value=result.value,
+                        source_type=result.source_type,
+                        evidence=result.evidence,
+                        status="not_applicable" if result.value == "" else "computed",
+                        notes=result.notes,
+                    )
+                )
+
+    return rows
+
+
 def write_verified_outputs(
     rows: list[VerifiedMetricRow],
     markdown_path: str | Path,
@@ -318,6 +355,71 @@ def render_verified_results_markdown(rows: list[VerifiedMetricRow]) -> str:
             "`verified_metrics.md` for the audit trail against the original sheet values.",
         ]
     )
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_computed_metrics_markdown(
+    rows: list[VerifiedMetricRow],
+    *,
+    title: str = "Metrics",
+    model_labels: tuple[str, ...] | None = None,
+    operating_points: dict[tuple[str, str], OperatingPoint] | None = None,
+) -> str:
+    """Render config/formula rows for one or more computed-only model contexts."""
+
+    verified_rows = [row for row in rows if row.category in {"config", "formula"}]
+    labels = model_labels or tuple(dict.fromkeys(row.model for row in verified_rows))
+    metrics_in_order: list[str] = []
+    for row in verified_rows:
+        if row.metric not in metrics_in_order:
+            metrics_in_order.append(row.metric)
+
+    by_key = {(row.metric, row.model, row.phase): row for row in verified_rows}
+    columns = ("Field", "Unit", "Category", "Evidence / Formula") + tuple(
+        f"{model} {phase}" for model in labels for phase in PHASES
+    )
+
+    lines = [
+        f"# {title}",
+        "",
+        "This table keeps the same config-derived and formula-derived metric set used by "
+        "`verify/verified_results.md`. Formula values are deterministic estimates from "
+        "model configs plus the pinned operating points; they are not runtime measurements.",
+        "",
+    ]
+    if operating_points:
+        lines.extend(["## Operating Point", ""])
+        lines.append("| `Model` | `Phase` | `Batch` | `Sequence` | `KV Context` |")
+        lines.append("| --- | --- | ---: | ---: | ---: |")
+        for model in labels:
+            for phase in PHASES:
+                point = operating_points[(model, phase)]
+                lines.append(
+                    f"| {_cell(model)} | {_cell(phase)} | {point.batch} | {point.sequence} | {point.kv_context} |"
+                )
+        lines.append("")
+
+    lines.extend(["## Metric Classification", ""])
+    lines.extend(_render_metric_classification(verified_rows))
+    lines.extend(["", "## Formula And Evidence", ""])
+    lines.extend(_render_metric_definition_table(verified_rows))
+    lines.extend(["", "## Metrics", ""])
+    lines.append("| " + " | ".join(f"`{column}`" for column in columns) + " |")
+    lines.append("| " + " | ".join("---" for _ in columns) + " |")
+
+    for metric in metrics_in_order:
+        sample = next(row for row in verified_rows if row.metric == metric)
+        table_row = [
+            metric,
+            sample.unit,
+            sample.category,
+            _metric_evidence_summary(metric, verified_rows),
+        ]
+        for model in labels:
+            for phase in PHASES:
+                table_row.append(_result_cell(by_key[(metric, model, phase)]))
+        lines.append("| " + " | ".join(_cell(value) for value in table_row) + " |")
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -543,7 +645,7 @@ def _hidden_dim(
 def _dense_ffn_dim(
     context: ModelContext, phase: str, sheet: dict[tuple[str, str, str], SheetCell]
 ) -> MetricResult:
-    if context.kind in {"nano", "olmoe"}:
+    if context.kind in {"nano", "olmoe", "deepseek_v4"}:
         return _config_result("N/A (MoE only)", "architecture has MoE block, no dense FFN stack", context)
     value = f"{context.config['intermediate_size']} (first {context.config['first_k_dense_replace']} layers only)"
     return _config_result(value, "intermediate_size + first_k_dense_replace", context)
@@ -566,6 +668,18 @@ def _attention_shape(
             "num_attention_heads, hidden_size, num_key_value_heads",
             context,
         )
+    if context.kind == "deepseek_v4":
+        heads = int(context.config["num_attention_heads"])
+        head_dim = int(context.config["head_dim"])
+        kv_heads = int(context.config.get("num_key_value_heads", 1))
+        rope_dim = int(context.config.get("qk_rope_head_dim", 64))
+        sliding = int(context.config["sliding_window"])
+        return _config_result(
+            f"{heads} / head_dim={head_dim} (rope={rope_dim}) / shared-KV MQA "
+            f"kv_heads={kv_heads}, sliding_window={sliding}",
+            "num_attention_heads, head_dim, qk_rope_head_dim, num_key_value_heads, sliding_window",
+            context,
+        )
 
     heads = int(context.config["num_attention_heads"])
     qk_nope = int(context.config["qk_nope_head_dim"])
@@ -583,9 +697,12 @@ def _attention_shape(
 def _total_experts(
     context: ModelContext, phase: str, sheet: dict[tuple[str, str, str], SheetCell]
 ) -> MetricResult:
-    key = {"nano": "n_experts", "olmoe": "num_experts", "deepseek": "n_routed_experts"}[
-        context.kind
-    ]
+    key = {
+        "nano": "n_experts",
+        "olmoe": "num_experts",
+        "deepseek": "n_routed_experts",
+        "deepseek_v4": "n_routed_experts",
+    }[context.kind]
     return _config_result(str(context.config[key]), key, context)
 
 
@@ -607,9 +724,12 @@ def _shared_experts(
 def _expert_ffn_dim(
     context: ModelContext, phase: str, sheet: dict[tuple[str, str, str], SheetCell]
 ) -> MetricResult:
-    key = {"nano": "d_ff", "olmoe": "intermediate_size", "deepseek": "moe_intermediate_size"}[
-        context.kind
-    ]
+    key = {
+        "nano": "d_ff",
+        "olmoe": "intermediate_size",
+        "deepseek": "moe_intermediate_size",
+        "deepseek_v4": "moe_intermediate_size",
+    }[context.kind]
     return _config_result(str(context.config[key]), key, context)
 
 
@@ -618,7 +738,11 @@ def _router_type(
     context: ModelContext, phase: str, sheet: dict[tuple[str, str, str], SheetCell]
 ) -> MetricResult:
     if context.kind == "nano":
-        return _config_result(f"softmax top-{context.config['top_k']}", "top_k + Nano-MoE-JAX router implementation", context)
+        return _config_result(
+            f"softmax top-{context.config['top_k']}",
+            "top_k + Nano-MoE-JAX router implementation",
+            context,
+        )
     if context.kind == "olmoe":
         value = (
             f"softmax top-{context.config['num_experts_per_tok']}, "
@@ -626,6 +750,19 @@ def _router_type(
             f"norm_topk_prob={context.config.get('norm_topk_prob')}"
         )
         return _config_result(value, "num_experts_per_tok, router_aux_loss_coef, norm_topk_prob", context)
+    if context.kind == "deepseek_v4":
+        value = (
+            f"{context.config.get('scoring_func')} top-{context.config['num_experts_per_tok']}, "
+            f"topk_method={context.config.get('topk_method')}, "
+            f"norm_topk_prob={context.config.get('norm_topk_prob')}, "
+            f"hash_layers={context.config.get('num_hash_layers', 3)}, "
+            f"shared_experts={context.config.get('n_shared_experts')}"
+        )
+        return _config_result(
+            value,
+            "scoring_func, num_experts_per_tok, topk_method, norm_topk_prob, num_hash_layers, n_shared_experts",
+            context,
+        )
     value = (
         f"{context.config.get('scoring_func')} top-{context.config['num_experts_per_tok']}, "
         f"topk_method={context.config.get('topk_method')}, "
@@ -643,8 +780,29 @@ def _weights_precision(
         return _config_result("FP32", "JAX default dtype for Nano-MoE-JAX defaults", context)
     quant = context.config.get("quantization_config")
     if isinstance(quant, dict) and quant.get("quant_method") == "fp8":
+        if context.config.get("expert_dtype"):
+            fmt = str(quant.get("fmt", "")).upper()
+            return _config_result(
+                f"{str(context.config['expert_dtype']).upper()} experts + FP8 ({fmt}) mixed",
+                "expert_dtype + quantization_config",
+                context,
+            )
         return _config_result(f"FP8 ({str(quant.get('fmt')).upper()})", "quantization_config", context)
-    return _config_result(_dtype_label(str(context.config.get("torch_dtype", "unknown"))), "torch_dtype", context)
+    if isinstance(quant, dict) and quant.get("quant_method") == "compressed-tensors":
+        bits = _compressed_tensor_weight_bits(quant)
+        base = _dtype_label(_config_dtype(context))
+        if bits is not None:
+            return _config_result(
+                f"INT{bits} compressed-tensors where applied; {base} for ignored modules",
+                "quantization_config + dtype",
+                context,
+            )
+        return _config_result(
+            f"compressed-tensors where applied; {base} for ignored modules",
+            "quantization_config + dtype",
+            context,
+        )
+    return _config_result(_dtype_label(_config_dtype(context)), "torch_dtype or dtype", context)
 
 
 @_register_config("Activations precision")
@@ -653,7 +811,7 @@ def _activations_precision(
 ) -> MetricResult:
     if context.kind == "nano":
         return _config_result("FP32", "JAX default dtype for Nano-MoE-JAX defaults", context)
-    return _config_result(_dtype_label(str(context.config.get("torch_dtype", "unknown"))), "torch_dtype", context)
+    return _config_result(_dtype_label(_config_dtype(context)), "torch_dtype or dtype", context)
 
 
 @_register_config("Key-Value cache precision")
@@ -662,7 +820,7 @@ def _kv_precision(
 ) -> MetricResult:
     if context.kind == "nano":
         return _config_result("FP32", "JAX default dtype for Nano-MoE-JAX defaults", context)
-    return _config_result(_dtype_label(str(context.config.get("torch_dtype", "unknown"))), "torch_dtype", context)
+    return _config_result(_dtype_label(_config_dtype(context)), "torch_dtype or dtype", context)
 
 
 @_register_config("Quantization scheme")
@@ -695,7 +853,8 @@ def _active_parameters(
 ) -> MetricResult:
     return _formula_result(
         _format_float(_active_param_total(context) / 1_000_000_000),
-        "active_parameter_count / 1e9; active weights = attention/dense/shared weights + top-k routed experts + lm_head",
+        "active_parameter_count / 1e9; active weights = attention/dense/shared "
+        "weights + top-k routed experts + lm_head",
         context,
         "unit=billions",
     )
@@ -872,6 +1031,28 @@ def _operating_point(
     )
 
 
+def _operating_point_sheet(
+    operating_points: dict[tuple[str, str], OperatingPoint],
+) -> dict[tuple[str, str, str], SheetCell]:
+    sheet: dict[tuple[str, str, str], SheetCell] = {}
+    for (model, phase), point in operating_points.items():
+        values = {
+            "Batch size": point.batch,
+            "Sequence length (prompt)": point.sequence,
+            "Context length (Key-Value)": point.kv_context,
+        }
+        for metric, value in values.items():
+            sheet[(metric, model, phase)] = SheetCell(
+                metric=metric,
+                unit="count" if metric == "Batch size" else "tokens",
+                model=model,
+                phase=phase,
+                value=str(value),
+                source="pinned operating point",
+            )
+    return sheet
+
+
 def _int_sheet(
     sheet: dict[tuple[str, str, str], SheetCell], metric: str, model: str, phase: str
 ) -> int:
@@ -899,13 +1080,18 @@ def _num_heads(context: ModelContext) -> int:
 
 
 def _head_dim(context: ModelContext) -> int:
+    if context.kind == "deepseek_v4":
+        return int(context.config["head_dim"])
     return _hidden_size(context) // _num_heads(context)
 
 
 def _num_experts(context: ModelContext) -> int:
-    key = {"nano": "n_experts", "olmoe": "num_experts", "deepseek": "n_routed_experts"}[
-        context.kind
-    ]
+    key = {
+        "nano": "n_experts",
+        "olmoe": "num_experts",
+        "deepseek": "n_routed_experts",
+        "deepseek_v4": "n_routed_experts",
+    }[context.kind]
     return int(context.config[key])
 
 
@@ -915,9 +1101,12 @@ def _top_k_value(context: ModelContext) -> int:
 
 
 def _expert_intermediate(context: ModelContext) -> int:
-    key = {"nano": "d_ff", "olmoe": "intermediate_size", "deepseek": "moe_intermediate_size"}[
-        context.kind
-    ]
+    key = {
+        "nano": "d_ff",
+        "olmoe": "intermediate_size",
+        "deepseek": "moe_intermediate_size",
+        "deepseek_v4": "moe_intermediate_size",
+    }[context.kind]
     return int(context.config[key])
 
 
@@ -945,19 +1134,36 @@ def _dtype_label(dtype: str) -> str:
     return dtype.upper()
 
 
+def _config_dtype(context: ModelContext) -> str:
+    return str(context.config.get("torch_dtype") or context.config.get("dtype") or "unknown")
+
+
+def _compressed_tensor_weight_bits(quant: dict[str, Any]) -> int | None:
+    groups = quant.get("config_groups")
+    if not isinstance(groups, dict):
+        return None
+    for group in groups.values():
+        if not isinstance(group, dict):
+            continue
+        weights = group.get("weights")
+        if isinstance(weights, dict) and weights.get("num_bits") is not None:
+            return int(weights["num_bits"])
+    return None
+
+
 def _weight_bytes(context: ModelContext) -> int:
     if context.kind == "nano":
         return 4
     quant = context.config.get("quantization_config")
     if isinstance(quant, dict) and quant.get("quant_method") == "fp8":
         return 1
-    return _dtype_bytes(str(context.config.get("torch_dtype", "float32")))
+    return _dtype_bytes(_config_dtype(context))
 
 
 def _activation_bytes(context: ModelContext) -> int:
     if context.kind == "nano":
         return 4
-    return _dtype_bytes(str(context.config.get("torch_dtype", "float32")))
+    return _dtype_bytes(_config_dtype(context))
 
 
 def _param_total(context: ModelContext) -> int:
@@ -969,12 +1175,32 @@ def _param_total(context: ModelContext) -> int:
         block = int(context.config["block_size"])
         return vocab * h + block * h + layers * _layer_params(context) + h + vocab * h
 
+    if context.kind == "deepseek_v4":
+        return (
+            vocab * h
+            + _all_layer_params(context)
+            + _deepseek_v4_final_hyper_params(context)
+            + h
+            + vocab * h
+        )
+
     return vocab * h + _all_layer_params(context) + h + vocab * h
 
 
 def _all_layer_params(context: ModelContext) -> int:
     if context.kind in {"nano", "olmoe"}:
         return _num_layers(context) * _layer_params(context)
+
+    if context.kind == "deepseek_v4":
+        counts = _deepseek_v4_attention_type_counts(context)
+        layers = _num_layers(context)
+        return (
+            layers * _deepseek_v4_attention_base_params(context)
+            + counts["heavily_compressed_attention"] * _deepseek_v4_hca_compressor_params(context)
+            + counts["compressed_sparse_attention"] * _deepseek_v4_csa_compressor_params(context)
+            + layers * _deepseek_v4_moe_layer_params(context)
+            + layers * _deepseek_v4_hyper_params_per_layer(context)
+        )
 
     layers = _num_layers(context)
     first_dense = int(context.config["first_k_dense_replace"])
@@ -990,6 +1216,9 @@ def _layer_params(context: ModelContext) -> int:
 
     if context.kind == "olmoe":
         return 4 * h * h + h * _num_experts(context) + _num_experts(context) * _expert_params_per_expert(context)
+
+    if context.kind == "deepseek_v4":
+        return round(_all_layer_params(context) / _num_layers(context))
 
     layers = _num_layers(context)
     return round(_all_layer_params(context) / layers)
@@ -1012,12 +1241,38 @@ def _active_param_total(context: ModelContext) -> int:
     vocab = int(context.config["vocab_size"])
 
     if context.kind == "nano":
-        per_layer = 4 * h * h + h * _num_experts(context) + _top_k_value(context) * 2 * h * _expert_intermediate(context)
+        per_layer = (
+            4 * h * h
+            + h * _num_experts(context)
+            + _top_k_value(context) * 2 * h * _expert_intermediate(context)
+        )
         return vocab * h + _num_layers(context) * per_layer + vocab * h
 
     if context.kind == "olmoe":
         per_layer = 4 * h * h + h * _num_experts(context) + _top_k_value(context) * _expert_params_per_expert(context)
         return vocab * h + _num_layers(context) * per_layer + vocab * h
+
+    if context.kind == "deepseek_v4":
+        layers = _num_layers(context)
+        counts = _deepseek_v4_attention_type_counts(context)
+        attention = (
+            layers * _deepseek_v4_attention_base_params(context)
+            + counts["heavily_compressed_attention"] * _deepseek_v4_hca_compressor_params(context)
+            + counts["compressed_sparse_attention"] * _deepseek_v4_csa_compressor_params(context)
+        )
+        active_moe = (
+            h * _num_experts(context)
+            + 3 * h * _expert_intermediate(context)
+            + _top_k_value(context) * _expert_params_per_expert(context)
+        )
+        return (
+            vocab * h
+            + attention
+            + layers * _deepseek_v4_hyper_params_per_layer(context)
+            + layers * active_moe
+            + _deepseek_v4_final_hyper_params(context)
+            + vocab * h
+        )
 
     layers = _num_layers(context)
     first_dense = int(context.config["first_k_dense_replace"])
@@ -1064,6 +1319,42 @@ def _mac_components(context: ModelContext, phase: str, ops: OperatingPoint) -> d
             "attention_proj": layers * 4 * h * h,
             "attention_qk_av": layers * 2 * heads * context_len * d,
             "router": layers * h * _num_experts(context),
+            "routed_expert_mlp_topk": layers
+            * _top_k_value(context)
+            * _expert_params_per_expert(context),
+            "lm_head": h * vocab,
+        }
+
+    if context.kind == "deepseek_v4":
+        counts = _deepseek_v4_attention_type_counts(context)
+        heads = _num_heads(context)
+        d = _head_dim(context)
+        local_len = min(context_len, int(context.config["sliding_window"]))
+        csa_rate = _deepseek_v4_compress_rate(context, "compressed_sparse_attention")
+        hca_rate = _deepseek_v4_compress_rate(context, "heavily_compressed_attention")
+        csa_len = context_len // csa_rate
+        hca_len = context_len // hca_rate
+        csa_active = min(int(context.config["index_topk"]), csa_len)
+        return {
+            "attention_main_proj": layers * _deepseek_v4_attention_base_params(context),
+            "attention_compressor_proj": counts["heavily_compressed_attention"]
+            * _deepseek_v4_hca_compressor_params(context)
+            + counts["compressed_sparse_attention"] * _deepseek_v4_csa_compressor_params(context),
+            "attention_qk_av_sliding": layers * 2 * heads * local_len * d,
+            "attention_qk_av_compressed": counts["heavily_compressed_attention"]
+            * 2
+            * heads
+            * hca_len
+            * d
+            + counts["compressed_sparse_attention"] * 2 * heads * csa_active * d,
+            "csa_indexer_scores": counts["compressed_sparse_attention"]
+            * int(context.config["index_n_heads"])
+            * int(context.config["index_head_dim"])
+            * csa_len,
+            "hyper_connection": layers * _deepseek_v4_hyper_params_per_layer(context)
+            + _deepseek_v4_final_hyper_params(context),
+            "router": layers * h * _num_experts(context),
+            "shared_expert_mlp": layers * 3 * h * _expert_intermediate(context),
             "routed_expert_mlp_topk": layers
             * _top_k_value(context)
             * _expert_params_per_expert(context),
@@ -1134,8 +1425,107 @@ def _kv_cache_bytes(context: ModelContext, ops: OperatingPoint) -> int:
         width = int(context.config["kv_lora_rank"]) + int(context.config["qk_rope_head_dim"])
         return layers * b * kv * width * bytes_per
 
+    if context.kind == "deepseek_v4":
+        counts = _deepseek_v4_attention_type_counts(context)
+        d = int(context.config["head_dim"])
+        index_d = int(context.config["index_head_dim"])
+        local = layers * b * min(kv, int(context.config["sliding_window"])) * d
+        hca = (
+            counts["heavily_compressed_attention"]
+            * b
+            * (kv // _deepseek_v4_compress_rate(context, "heavily_compressed_attention"))
+            * d
+        )
+        csa = (
+            counts["compressed_sparse_attention"]
+            * b
+            * (kv // _deepseek_v4_compress_rate(context, "compressed_sparse_attention"))
+            * (d + index_d)
+        )
+        return (local + hca + csa) * bytes_per
+
     kv_heads = _num_heads(context) if context.kind == "nano" else int(context.config["num_key_value_heads"])
     return layers * b * kv * 2 * kv_heads * _head_dim(context) * bytes_per
+
+
+def _deepseek_v4_attention_type_counts(context: ModelContext) -> Counter[str]:
+    layers = _deepseek_v4_attention_layer_types(context)
+    return Counter(layers)
+
+
+def _deepseek_v4_attention_layer_types(context: ModelContext) -> list[str]:
+    num_layers = _num_layers(context)
+    ratios = context.config.get("compress_ratios")
+    if isinstance(ratios, list):
+        mapping = {
+            0: "sliding_attention",
+            4: "compressed_sparse_attention",
+            128: "heavily_compressed_attention",
+        }
+        return [mapping[int(ratio)] for ratio in ratios[:num_layers]]
+    interleave = [
+        "compressed_sparse_attention" if index % 2 else "heavily_compressed_attention"
+        for index in range(max(num_layers - 2, 0))
+    ]
+    return (["heavily_compressed_attention"] * min(num_layers, 2) + interleave)[:num_layers]
+
+
+def _deepseek_v4_compress_rate(context: ModelContext, layer_type: str) -> int:
+    rates = context.config.get("compress_rates")
+    if isinstance(rates, dict):
+        return int(rates[layer_type])
+    if layer_type == "compressed_sparse_attention":
+        return int(context.config.get("compress_rate_csa", 4))
+    return int(context.config.get("compress_rate_hca", 128))
+
+
+def _deepseek_v4_attention_base_params(context: ModelContext) -> int:
+    h = _hidden_size(context)
+    heads = _num_heads(context)
+    d = _head_dim(context)
+    q_rank = int(context.config["q_lora_rank"])
+    groups = int(context.config["o_groups"])
+    o_rank = int(context.config["o_lora_rank"])
+    grouped_width = groups * o_rank
+    return (
+        h * q_rank
+        + q_rank * heads * d
+        + h * d
+        + o_rank * heads * d
+        + h * grouped_width
+    )
+
+
+def _deepseek_v4_hca_compressor_params(context: ModelContext) -> int:
+    return 2 * _hidden_size(context) * _head_dim(context)
+
+
+def _deepseek_v4_csa_compressor_params(context: ModelContext) -> int:
+    h = _hidden_size(context)
+    d = _head_dim(context)
+    index_heads = int(context.config["index_n_heads"])
+    index_d = int(context.config["index_head_dim"])
+    q_rank = int(context.config["q_lora_rank"])
+    return 4 * h * d + 4 * h * index_d + q_rank * index_heads * index_d + h * index_heads
+
+
+def _deepseek_v4_moe_layer_params(context: ModelContext) -> int:
+    h = _hidden_size(context)
+    i = _expert_intermediate(context)
+    routed = _num_experts(context)
+    return h * routed + routed * 3 * h * i + 3 * h * i
+
+
+def _deepseek_v4_hyper_params_per_layer(context: ModelContext) -> int:
+    h = _hidden_size(context)
+    hc = int(context.config["hc_mult"])
+    return 2 * (2 + hc) * hc * hc * h
+
+
+def _deepseek_v4_final_hyper_params(context: ModelContext) -> int:
+    h = _hidden_size(context)
+    hc = int(context.config["hc_mult"])
+    return hc * hc * h
 
 
 def _format_float(value: float) -> str:

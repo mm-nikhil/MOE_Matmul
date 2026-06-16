@@ -8,6 +8,8 @@ from typing import Any
 from moe_matmul_stats.schema import ModelStats
 
 from .deepseek_v3 import extract_deepseek_v3
+from .deepseek_v4 import extract_deepseek_v4
+from .kimi_k25 import extract_kimi_k2_text, extract_kimi_k25
 from .nano_jax import extract_nano_jax
 from .olmoe import extract_olmoe
 
@@ -20,6 +22,9 @@ class UnsupportedModelError(ValueError):
 
 EXTRACTORS: dict[str, Extractor] = {
     "deepseek_v3": extract_deepseek_v3,
+    "deepseek_v4": extract_deepseek_v4,
+    "kimi_k2": extract_kimi_k2_text,
+    "kimi_k25": extract_kimi_k25,
     "nano_moe_jax": extract_nano_jax,
     "olmoe": extract_olmoe,
 }

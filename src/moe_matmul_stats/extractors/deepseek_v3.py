@@ -38,6 +38,25 @@ SUMMARY_KEYS = (
 
 
 def extract_deepseek_v3(model: str, source: str, config: Mapping[str, Any]) -> ModelStats:
+    return extract_deepseek_mla_moe(
+        model=model,
+        source=source,
+        config=config,
+        architecture_label="DeepSeek-V3",
+        extra_notes=(
+            "Config exposes num_nextn_predict_layers for MTP; this report covers the main decoder stack and LM head.",
+        ),
+    )
+
+
+def extract_deepseek_mla_moe(
+    *,
+    model: str,
+    source: str,
+    config: Mapping[str, Any],
+    architecture_label: str,
+    extra_notes: tuple[str, ...] = (),
+) -> ModelStats:
     cfg = dict(config)
     hidden_size = int(cfg["hidden_size"])
     dense_intermediate = int(cfg["intermediate_size"])
@@ -360,10 +379,10 @@ def extract_deepseek_v3(model: str, source: str, config: Mapping[str, Any]) -> M
         records=records,
         config_summary=summarize_config(cfg, SUMMARY_KEYS),
         notes=[
-            "DeepSeek-V3 uses MLA attention, so Q and KV projections are low-rank/compressed rather than standard Q/K/V projections.",
+            f"{architecture_label} uses MLA attention, so Q and KV projections are low-rank/compressed rather than standard Q/K/V projections.",
             f"First {first_dense} decoder layers use dense MLP; later MoE layers are {moe_span}.",
             "Routed expert rows use N_e because exact expert token counts are runtime-dependent.",
-            "Config exposes num_nextn_predict_layers for MTP; this report covers the main decoder stack and LM head.",
+            *extra_notes,
         ],
     )
 

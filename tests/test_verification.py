@@ -5,6 +5,8 @@ from moe_matmul_stats.schema import ModelStats
 from moe_matmul_stats.sources import NANO_MOE_JAX_DEFAULT_CONFIG, collectStatsFromConfig
 from moe_matmul_stats.verification import (
     ModelContext,
+    OperatingPoint,
+    build_computed_metric_rows,
     build_verified_rows,
     render_verified_results_markdown,
 )
@@ -67,6 +69,55 @@ class VerificationTests(unittest.TestCase):
         verified_sheet = markdown.split("## Verified Sheet", maxsplit=1)[1]
         self.assertNotIn("| Business case / relevance", verified_sheet)
         self.assertNotIn("| Latency target", verified_sheet)
+
+    def test_computed_metric_rows_support_deepseek_v4(self) -> None:
+        config = {
+            "model_type": "deepseek_v4",
+            "hidden_size": 7168,
+            "moe_intermediate_size": 3072,
+            "num_hidden_layers": 5,
+            "num_hash_layers": 2,
+            "num_attention_heads": 128,
+            "num_key_value_heads": 1,
+            "head_dim": 512,
+            "q_lora_rank": 1536,
+            "qk_rope_head_dim": 64,
+            "sliding_window": 128,
+            "compress_ratios": [128, 128, 4, 128, 0],
+            "index_n_heads": 64,
+            "index_head_dim": 128,
+            "index_topk": 1024,
+            "o_groups": 16,
+            "o_lora_rank": 1024,
+            "n_routed_experts": 384,
+            "n_shared_experts": 1,
+            "num_experts_per_tok": 6,
+            "scoring_func": "sqrtsoftplus",
+            "topk_method": "noaux_tc",
+            "norm_topk_prob": True,
+            "hidden_act": "silu",
+            "hc_mult": 4,
+            "torch_dtype": "bfloat16",
+            "expert_dtype": "fp4",
+            "quantization_config": {"quant_method": "fp8", "fmt": "e4m3"},
+            "vocab_size": 129280,
+        }
+        context = _context("DeepSeek-V4-Pro", "deepseek_v4", config)
+        ops = {
+            ("DeepSeek-V4-Pro", "Prefill"): OperatingPoint(32, 1024, 4096),
+            ("DeepSeek-V4-Pro", "Decode"): OperatingPoint(32, 4096, 4096),
+        }
+
+        rows = build_computed_metric_rows(contexts={"DeepSeek-V4-Pro": context}, operating_points=ops)
+        by_key = {(row.metric, row.phase): row for row in rows}
+
+        self.assertEqual(by_key[("Layers", "Prefill")].value, "5")
+        self.assertIn("shared-KV MQA", by_key[("Attention: heads / head dim / Key-Value heads", "Prefill")].value)
+        self.assertEqual(
+            by_key[("Weights precision", "Prefill")].value,
+            "FP4 experts + FP8 (E4M3) mixed",
+        )
+        self.assertGreater(float(by_key[("Total parameters", "Prefill")].value), 100)
 
 
 def _test_contexts() -> dict[str, ModelContext]:

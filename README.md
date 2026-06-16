@@ -7,12 +7,18 @@ Initial target models:
 - Nano-MoE-JAX
 - OLMoE-1B-7B
 - DeepSeek-V3
+- DeepSeek-V4-Pro
+- Kimi-K2.5
 
-Generate the combined report:
+Generate the combined report plus organized per-model outputs:
 
 ```bash
 PYTHONPATH=src python3 -m moe_matmul_stats.cli --out results/moe_matmul_stats.md
 ```
+
+New Hugging Face configs are saved under `models/<model-slug>/config.json`.
+Per-model outputs are saved under `results/<model-slug>/metrics.md` and
+`results/<model-slug>/matmul.md`.
 
 ## Matmul Record
 
@@ -22,9 +28,9 @@ One record describes one matmul family, not every runtime invocation.
 | --- | --- |
 | `model` | Model name and checkpoint/source. |
 | `layer_range` | Decoder layers where this matmul family appears, using zero-based inclusive ranges like `0..15`. |
-| `block` | Architectural block that owns the matmul: `attention`, `router`, `expert_mlp`, `dense_mlp`, or `lm_head`. |
-| `op_name` | Local operation name, such as `q_proj`, `qk_scores`, `gate_proj`, or `down_proj`. |
-| `op_kind` | Computation style: `linear`, `batched_matmul`, `grouped_expert_matmul`, or `embedding_lookup`. |
+| `block` | Architectural block that owns the matmul: `attention`, `attention_compressor`, `router`, `expert_mlp`, `shared_expert_mlp`, `routed_expert_mlp`, `dense_mlp`, `hyper_connection`, or `lm_head`. |
+| `op_name` | Local operation name, such as `q_proj`, `qk_scores`, `gate_proj`, `down_proj`, or `csa_indexer_scores`. |
+| `op_kind` | Computation style: `linear`, `grouped_linear`, `batched_matmul`, `grouped_expert_matmul`, or `embedding_lookup`. |
 | `lhs_shape` | Symbolic left input shape. |
 | `rhs_shape` | Symbolic weight/right input shape. |
 | `output_shape` | Symbolic output shape. |

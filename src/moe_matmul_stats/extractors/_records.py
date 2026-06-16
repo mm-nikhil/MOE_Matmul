@@ -57,9 +57,15 @@ def numeric_format_from_config(config: dict | object) -> str:
     parts: list[str] = []
     if torch_dtype:
         parts.append(f"torch_dtype={torch_dtype}")
+    dtype = config.get("dtype")
+    if dtype and dtype != torch_dtype:
+        parts.append(f"dtype={dtype}")
+    expert_dtype = config.get("expert_dtype")
+    if expert_dtype:
+        parts.append(f"expert_dtype={expert_dtype}")
     if isinstance(quant, dict):
         method = quant.get("quant_method")
-        fmt = quant.get("fmt")
+        fmt = quant.get("fmt") or quant.get("format")
         if method and fmt:
             parts.append(f"quant={method}/{fmt}")
         elif method:
