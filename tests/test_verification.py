@@ -64,8 +64,9 @@ class VerificationTests(unittest.TestCase):
         self.assertIn("Total experts", markdown)
         self.assertIn("| Total experts | count | config |", markdown)
         self.assertIn("| 4 | 4 | 64 | 64 | 256 | 256 |", markdown)
-        self.assertNotIn("Business case / relevance", markdown)
-        self.assertNotIn("Latency target", markdown)
+        verified_sheet = markdown.split("## Verified Sheet", maxsplit=1)[1]
+        self.assertNotIn("| Business case / relevance", verified_sheet)
+        self.assertNotIn("| Latency target", verified_sheet)
 
 
 def _test_contexts() -> dict[str, ModelContext]:

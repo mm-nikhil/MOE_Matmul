@@ -253,16 +253,19 @@ def render_verified_results_markdown(rows: list[VerifiedMetricRow]) -> str:
             metrics_in_order.append(row.metric)
 
     by_key = {(row.metric, row.model, row.phase): row for row in verified_rows}
+    all_metric_classification = _render_metric_classification(rows)
 
     lines = [
         "# Verified Results",
         "",
-        "This is the compact replacement for the AI-filled spreadsheet. It keeps only "
-        "config-verifiable and formula-verifiable metrics, and uses values recomputed "
-        "from model configs plus explicit formulas.",
+        "This is the compact replacement for the spreadsheet. It keeps direct "
+        "config-derived metrics and formula-derived estimates that can be recomputed "
+        "from model configs plus the pinned operating points.",
         "",
-        "This table shows the verified values only. Comparison against the original "
-        "AI-filled sheet is kept in `verified_metrics.md`.",
+        "Config rows are direct reads from the current model configs. Formula rows are "
+        "deterministic derived values under the formulas listed below; they are not "
+        "runtime measurements or hardware performance claims. Comparison against the "
+        "original sheet is kept in `verified_metrics.md`.",
         "",
         "## Summary",
         "",
@@ -271,6 +274,9 @@ def render_verified_results_markdown(rows: list[VerifiedMetricRow]) -> str:
         f"| verified metric rows | {len(metrics_in_order)} |",
         f"| flattened verified cells | {len(verified_rows)} |",
     ]
+
+    lines.extend(["", "## Metric Classification", ""])
+    lines.extend(all_metric_classification)
 
     lines.extend(["", "## Formula And Evidence", ""])
     lines.extend(_render_metric_definition_table(verified_rows))
@@ -309,7 +315,7 @@ def render_verified_results_markdown(rows: list[VerifiedMetricRow]) -> str:
     lines.extend(
         [
             "This compact sheet intentionally omits match/mismatch annotations. Use "
-            "`verified_metrics.md` for the audit trail against the original AI-filled values.",
+            "`verified_metrics.md` for the audit trail against the original sheet values.",
         ]
     )
 

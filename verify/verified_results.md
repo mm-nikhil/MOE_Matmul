@@ -1,8 +1,8 @@
 # Verified Results
 
-This is the compact replacement for the AI-filled spreadsheet. It keeps only config-verifiable and formula-verifiable metrics, and uses values recomputed from model configs plus explicit formulas.
+This is the compact replacement for the spreadsheet. It keeps direct config-derived metrics and formula-derived estimates that can be recomputed from model configs plus the pinned operating points.
 
-This table shows the verified values only. Comparison against the original AI-filled sheet is kept in `verified_metrics.md`.
+Config rows are direct reads from the current model configs. Formula rows are deterministic derived values under the formulas listed below; they are not runtime measurements or hardware performance claims. Comparison against the original sheet is kept in `verified_metrics.md`.
 
 ## Summary
 
@@ -10,6 +10,14 @@ This table shows the verified values only. Comparison against the original AI-fi
 | --- | ---: |
 | verified metric rows | 24 |
 | flattened verified cells | 144 |
+
+## Metric Classification
+
+| Category | Metrics |
+| --- | --- |
+| Config-verifiable | Layers<br>Hidden dimension<br>Feedforward dimension (dense)<br>Attention: heads / head dim / Key-Value heads<br>Total experts<br>Experts active per token (top-k)<br>Shared experts<br>Expert feedforward dimension<br>Router / gating type<br>Weights precision<br>Activations precision<br>Key-Value cache precision<br>Quantization scheme |
+| Formula-verifiable | Total parameters<br>Active parameters per token<br>Multiply-accumulate ops per token<br>Dominant operators (shapes + % of compute)<br>Weight footprint (total)<br>Weight footprint per layer<br>Weight footprint per expert<br>Activation footprint per layer<br>Key-Value cache size<br>Key-Value cache read bandwidth per decode step<br>Expert activation fraction (top-k / total) |
+| Not config-verifiable | Business case / relevance (1 line)<br>Batch size<br>Sequence length (prompt)<br>Context length (Key-Value)<br>Arithmetic intensity<br>Bytes moved off-chip per token<br>On-chip resident working set<br>Reuse / locality notes<br>Accumulation precision<br>Other sparsity (type + level)<br>Routing / gather-scatter implication<br>Latency target (first-token prefill / per-token decode)<br>Throughput target (per stream)<br>Throughput target (aggregate)<br>Efficiency target (optional)<br>Accuracy floor<br>Throughput target (per cycle) |
 
 ## Formula And Evidence
 
@@ -90,4 +98,4 @@ This table shows the verified values only. Comparison against the original AI-fi
 
 ## Status Legend
 
-This compact sheet intentionally omits match/mismatch annotations. Use `verified_metrics.md` for the audit trail against the original AI-filled values.
+This compact sheet intentionally omits match/mismatch annotations. Use `verified_metrics.md` for the audit trail against the original sheet values.
